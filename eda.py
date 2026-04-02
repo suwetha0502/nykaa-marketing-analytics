@@ -1,207 +1,184 @@
+"""
+Exploratory Data Analysis module for Nykaa Marketing Analytics.
+Provides an EDAnalyzer class that app.py can import and use.
+Matplotlib rcParams are only set inside methods, not at import time.
+"""
+
 import pandas as pd
 import numpy as np
-import seaborn as sns
+import matplotlib
+matplotlib.use('Agg')  # headless backend — safe for Streamlit
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from matplotlib import rcParams
+import seaborn as sns
 
-# ─────────────────────────────────────────────
-# GLOBAL STYLE
-# ─────────────────────────────────────────────
-PALETTE   = ["#6C63FF", "#00D4AA", "#FF6B9D", "#FFB347", "#64DFDF",
-             "#A78BFA", "#34D399", "#F472B6"]
-BG        = "#0D0F1A"
-CARD      = "#141728"
-TEXT      = "#F0F2FF"
-TEXT_MUTED= "#8A8FAD"
-GRID      = "#252840"
+try:
+    import plotly.express as px
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
 
-rcParams.update({
-    "figure.facecolor":  BG,
-    "axes.facecolor":    CARD,
-    "axes.edgecolor":    GRID,
-    "axes.labelcolor":   TEXT,
-    "axes.titlecolor":   "#6C63FF",
-    "axes.titlesize":    13,
-    "axes.titleweight":  "bold",
-    "xtick.color":       TEXT_MUTED,
-    "ytick.color":       TEXT_MUTED,
-    "text.color":        TEXT,
-    "grid.color":        GRID,
-    "grid.linestyle":    "--",
-    "grid.alpha":        0.5,
-    "font.family":       "monospace",
-    "legend.facecolor":  CARD,
-    "legend.edgecolor":  GRID,
-})
+
+PALETTE = ['#6C63FF', '#00D4AA', '#FF6B9D', '#FFB347', '#64DFDF',
+           '#A78BFA', '#34D399', '#F472B6']
 
 NUMERIC_COLS = [
-    "duration", "impressions", "clicks", "leads",
-    "conversions", "revenue", "acquisition_cost",
-    "roi", "engagement_score",
+    'duration', 'impressions', 'clicks', 'leads',
+    'conversions', 'revenue', 'acquisition_cost',
+    'roi', 'engagement_score',
 ]
 
 
-# ─────────────────────────────────────────────
-# LOAD & PREPROCESS
-# ─────────────────────────────────────────────
-def load_and_prep(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    return df
+def _apply_dark_style():
+    """Apply dark matplotlib theme (called lazily inside methods)."""
+    plt.rcParams.update({
+        'figure.facecolor': '#0D0F1A',
+        'axes.facecolor':   '#141728',
+        'axes.edgecolor':   '#252840',
+        'axes.labelcolor':  '#F0F2FF',
+        'axes.titlecolor':  '#6C63FF',
+        'xtick.color':      '#8A8FAD',
+        'ytick.color':      '#8A8FAD',
+        'text.color':       '#F0F2FF',
+        'grid.color':       '#252840',
+        'grid.linestyle':   '--',
+        'grid.alpha':       0.5,
+        'legend.facecolor': '#141728',
+        'legend.edgecolor': '#252840',
+    })
 
 
-# ─────────────────────────────────────────────
-# EDA REPORTS
-# ─────────────────────────────────────────────
-def univariate_analysis(df: pd.DataFrame) -> None:
-    print("\n" + "═" * 60)
-    print("  UNIVARIATE SUMMARY STATISTICS")
-    print("═" * 60)
-    print(df[NUMERIC_COLS].describe().round(3).to_string())
+class EDAnalyzer:
+    """Exploratory data analysis for campaign data."""
 
-    present = [c for c in NUMERIC_COLS if c in df.columns]
-    n = len(present)
-    cols = 3
-    rows = (n + cols - 1) // cols
+    def __init__(self, df: pd.DataFrame):
+        self.df = df
 
-    fig, axes = plt.subplots(rows, cols, figsize=(16, rows * 4))
-    fig.suptitle("Univariate Distributions", fontsize=16, color="#6C63FF",
-                 fontweight="bold", y=1.01)
-    axes = axes.flatten()
+    # ── Outlier Analysis ─────────────────────────────────────────────────────
 
-    for i, col in enumerate(present):
-        sns.histplot(df[col].dropna(), kde=True, ax=axes[i],
-                     color=PALETTE[i % len(PALETTE)], edgecolor="none", alpha=0.85)
-        axes[i].set_title(col.replace("_", " ").title())
-        axes[i].set_xlabel("")
+    def outlier_analysis(self):
+        """Return (fig, outlier_stats_dict) for numeric columns."""
+        _apply_dark_style()
+        present = [c for c in NUMERIC_COLS if c in self.df.columns]
+        if not present:
+            return None, {}
 
-    for j in range(i + 1, len(axes)):
-        axes[j].set_visible(False)
+        fig, ax = plt.subplots(figsize=(16, 6))
+        data = [self.df[c].dropna() for c in present]
+        bp = ax.boxplot(
+            data, patch_artist=True, notch=False, vert=True,
+            medianprops=dict(color='#FFB347', linewidth=2),
+        )
+        for i, patch in enumerate(bp['boxes']):
+            patch.set_facecolor(PALETTE[i % len(PALETTE)])
+            patch.set_alpha(0.75)
 
-    plt.tight_layout()
-    plt.show()
+        ax.set_xticks(range(1, len(present) + 1))
+        ax.set_xticklabels([c.replace('_', '\n') for c in present], fontsize=9)
+        ax.set_title('Outlier Detection — Boxplots', fontsize=14)
+        plt.tight_layout()
 
+        # Build outlier stats dict
+        outlier_stats = {}
+        for col in present:
+            q1, q3 = self.df[col].quantile(0.25), self.df[col].quantile(0.75)
+            iqr = q3 - q1
+            mask = (self.df[col] < q1 - 1.5 * iqr) | (self.df[col] > q3 + 1.5 * iqr)
+            count = int(mask.sum())
+            outlier_stats[col] = {
+                'count': count,
+                'percentage': count / len(self.df) * 100 if len(self.df) > 0 else 0,
+            }
 
-def campaign_rankings(df: pd.DataFrame) -> None:
-    print("\n" + "═" * 60)
-    print("  TOP 5 CAMPAIGNS BY ROI")
-    print("═" * 60)
-    top = df.nlargest(5, "roi")[["campaign_id", "campaign_type", "roi", "revenue", "conversions"]]
-    print(top.to_string(index=False))
+        return fig, outlier_stats
 
-    print("\n" + "═" * 60)
-    print("  BOTTOM 5 CAMPAIGNS BY ROI")
-    print("═" * 60)
-    bot = df.nsmallest(5, "roi")[["campaign_id", "campaign_type", "roi", "revenue", "conversions"]]
-    print(bot.to_string(index=False))
+    # ── Time Series Analysis ─────────────────────────────────────────────────
 
-    print("\n  TOP 5 BY REVENUE")
-    print(df.nlargest(5, "revenue")[["campaign_id", "campaign_type", "revenue", "roi"]].to_string(index=False))
+    def time_series_analysis(self):
+        """Return (plotly_fig, daily_metrics_df) or (None, None)."""
+        if 'date' not in self.df.columns or not PLOTLY_AVAILABLE:
+            return None, None
 
+        daily = (
+            self.df.groupby('date')
+            .agg(
+                avg_roi=('roi', 'mean'),
+                total_revenue=('revenue', 'sum'),
+                campaigns=('roi', 'count'),
+            )
+            .reset_index()
+        )
 
-def segment_analysis(df: pd.DataFrame) -> None:
-    segments = {
-        "Campaign Type":   "campaign_type",
-        "Target Audience": "target_audience",
-        "Language":        "language",
-    }
-    for label, col in segments.items():
-        if col not in df.columns:
-            continue
-        print(f"\n  Avg ROI by {label}:")
-        print(df.groupby(col)["roi"].mean().sort_values(ascending=False).round(3).to_string())
+        fig = px.line(
+            daily, x='date', y='avg_roi',
+            title='Average ROI Over Time',
+            labels={'avg_roi': 'Average ROI', 'date': 'Date'},
+            color_discrete_sequence=['#667eea'],
+        )
+        fig.update_layout(
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white'),
+        )
+        return fig, daily
 
-    # Bar charts
-    fig, axes = plt.subplots(1, len(segments), figsize=(18, 5))
-    fig.suptitle("Average ROI by Segment", fontsize=15, color="#6C63FF", fontweight="bold")
+    # ── Correlation Heatmap ──────────────────────────────────────────────────
 
-    for ax, (label, col) in zip(axes, segments.items()):
-        if col not in df.columns:
-            ax.set_visible(False)
-            continue
-        data = df.groupby(col)["roi"].mean().sort_values()
-        bars = ax.barh(data.index, data.values,
-                       color=[PALETTE[i % len(PALETTE)] for i in range(len(data))],
-                       edgecolor="none", height=0.6)
-        ax.set_title(label)
-        ax.set_xlabel("Avg ROI")
-        ax.grid(axis="x")
+    def correlation_heatmap(self):
+        """Return matplotlib figure of the correlation matrix."""
+        _apply_dark_style()
+        present = [c for c in NUMERIC_COLS if c in self.df.columns]
+        if len(present) < 2:
+            return None
 
-    plt.tight_layout()
-    plt.show()
+        corr = self.df[present].corr()
+        fig, ax = plt.subplots(figsize=(11, 9))
+        sns.heatmap(
+            corr, ax=ax, annot=True, fmt='.2f',
+            cmap=sns.diverging_palette(260, 10, as_cmap=True),
+            linewidths=0.5, linecolor='#252840',
+            square=True,
+        )
+        ax.set_title('Correlation Matrix', fontsize=14)
+        plt.tight_layout()
+        return fig
 
+    # ── Univariate Analysis ──────────────────────────────────────────────────
 
-def channel_effectiveness(df: pd.DataFrame) -> None:
-    if "channel_used" not in df.columns:
-        return
-    channels = df.copy()
-    channels["channel_list"] = channels["channel_used"].str.split(", ")
-    exploded = channels.explode("channel_list")
-    ch_perf = (
-        exploded.groupby("channel_list")
-        .agg(roi=("roi", "mean"), revenue=("revenue", "sum"),
-             conversions=("conversions", "sum"), impressions=("impressions", "sum"))
-        .round(2)
-        .sort_values("roi", ascending=False)
-    )
-    print("\n  Channel Effectiveness:")
-    print(ch_perf.to_string())
+    def univariate_analysis(self):
+        """Return matplotlib figure of distribution histograms."""
+        _apply_dark_style()
+        present = [c for c in NUMERIC_COLS if c in self.df.columns]
+        if not present:
+            return None
 
+        cols_per_row = 3
+        rows = (len(present) + cols_per_row - 1) // cols_per_row
+        fig, axes = plt.subplots(rows, cols_per_row, figsize=(16, rows * 4))
+        axes = axes.flatten()
 
-def correlation_heatmap(df: pd.DataFrame) -> None:
-    present = [c for c in NUMERIC_COLS if c in df.columns]
-    corr = df[present].corr()
+        for i, col in enumerate(present):
+            sns.histplot(
+                self.df[col].dropna(), kde=True, ax=axes[i],
+                color=PALETTE[i % len(PALETTE)], edgecolor='none', alpha=0.85,
+            )
+            axes[i].set_title(col.replace('_', ' ').title())
+            axes[i].set_xlabel('')
 
-    fig, ax = plt.subplots(figsize=(11, 9))
-    mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
-    sns.heatmap(
-        corr, ax=ax, annot=True, fmt=".2f",
-        cmap=sns.diverging_palette(260, 10, as_cmap=True),
-        linewidths=0.5, linecolor=GRID,
-        cbar_kws={"shrink": 0.8},
-        square=True,
-    )
-    ax.set_title("Correlation Matrix", fontsize=14)
-    plt.tight_layout()
-    plt.show()
+        for j in range(len(present), len(axes)):
+            axes[j].set_visible(False)
 
-
-def outlier_analysis(df: pd.DataFrame) -> None:
-    present = [c for c in NUMERIC_COLS if c in df.columns]
-
-    fig, ax = plt.subplots(figsize=(16, 6))
-    data = [df[c].dropna() for c in present]
-    bp = ax.boxplot(data, patch_artist=True, notch=True, vert=True,
-                    medianprops=dict(color="#FFB347", linewidth=2))
-    for i, patch in enumerate(bp["boxes"]):
-        patch.set_facecolor(PALETTE[i % len(PALETTE)])
-        patch.set_alpha(0.75)
-    ax.set_xticks(range(1, len(present) + 1))
-    ax.set_xticklabels([c.replace("_", "\n") for c in present], fontsize=9)
-    ax.set_title("Outlier Detection — Boxplots", fontsize=14)
-    plt.tight_layout()
-    plt.show()
-
-    q1, q3 = df["roi"].quantile(0.25), df["roi"].quantile(0.75)
-    iqr = q3 - q1
-    outliers = df[(df["roi"] < q1 - 1.5 * iqr) | (df["roi"] > q3 + 1.5 * iqr)]
-    print(f"\n  ROI outliers detected: {len(outliers)}")
+        plt.tight_layout()
+        return fig
 
 
-# ─────────────────────────────────────────────
-# FULL PIPELINE
-# ─────────────────────────────────────────────
-def run_eda(path: str = "nykaa_campaign_data.csv") -> None:
-    df = load_and_prep(path)
-    univariate_analysis(df)
-    campaign_rankings(df)
-    segment_analysis(df)
-    channel_effectiveness(df)
-    correlation_heatmap(df)
-    outlier_analysis(df)
+# ── Standalone execution ──────────────────────────────────────────────────────
+if __name__ == '__main__':
+    df = pd.read_csv('nykaa_campaign_data.csv')
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
 
-
-if __name__ == "__main__":
-    run_eda()
+    analyzer = EDAnalyzer(df)
+    fig_out, stats = analyzer.outlier_analysis()
+    if fig_out:
+        plt.show()

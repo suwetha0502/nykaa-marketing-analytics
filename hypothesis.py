@@ -1,224 +1,178 @@
+"""
+Hypothesis testing module for Nykaa Marketing Analytics.
+Provides a HypothesisTester class that app.py can import and use.
+"""
+
 import pandas as pd
 import numpy as np
 from scipy import stats
-import seaborn as sns
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
 from itertools import combinations
 
-# ─────────────────────────────────────────────
-# GLOBAL STYLE  (matches eda.py)
-# ─────────────────────────────────────────────
-PALETTE    = ["#6C63FF", "#00D4AA", "#FF6B9D", "#FFB347", "#64DFDF",
-              "#A78BFA", "#34D399", "#F472B6"]
-BG         = "#0D0F1A"
-CARD       = "#141728"
-TEXT       = "#F0F2FF"
-TEXT_MUTED = "#8A8FAD"
-GRID       = "#252840"
-SIG_COLOR  = "#00D4AA"
-INSIG_COLOR= "#FF6B9D"
-
-rcParams.update({
-    "figure.facecolor": BG,
-    "axes.facecolor":   CARD,
-    "axes.edgecolor":   GRID,
-    "axes.labelcolor":  TEXT,
-    "axes.titlecolor":  "#6C63FF",
-    "axes.titlesize":   13,
-    "axes.titleweight": "bold",
-    "xtick.color":      TEXT_MUTED,
-    "ytick.color":      TEXT_MUTED,
-    "text.color":       TEXT,
-    "grid.color":       GRID,
-    "grid.linestyle":   "--",
-    "grid.alpha":       0.5,
-    "font.family":      "monospace",
-    "legend.facecolor": CARD,
-    "legend.edgecolor": GRID,
-})
-
-ALPHA = 0.05  # significance level
+import matplotlib
+matplotlib.use('Agg')  # headless — safe for Streamlit
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
-def _ttest(g1: pd.Series, g2: pd.Series) -> tuple[float, float]:
-    """Welch's t-test, returns (t_stat, p_value)."""
-    return stats.ttest_ind(g1.dropna(), g2.dropna(), equal_var=False)
+PALETTE = ['#6C63FF', '#00D4AA', '#FF6B9D', '#FFB347', '#64DFDF',
+           '#A78BFA', '#34D399', '#F472B6']
+SIG_COLOR   = '#00D4AA'
+INSIG_COLOR = '#FF6B9D'
+ALPHA       = 0.05
 
 
-def _sig_label(p: float) -> str:
-    if p < 0.001: return "★★★ Highly Significant"
-    if p < 0.01:  return "★★  Significant"
-    if p < ALPHA: return "★   Significant"
-    return "✗   Not Significant"
+def _apply_dark_style():
+    plt.rcParams.update({
+        'figure.facecolor': '#0D0F1A',
+        'axes.facecolor':   '#141728',
+        'axes.edgecolor':   '#252840',
+        'axes.labelcolor':  '#F0F2FF',
+        'axes.titlecolor':  '#6C63FF',
+        'xtick.color':      '#8A8FAD',
+        'ytick.color':      '#8A8FAD',
+        'text.color':       '#F0F2FF',
+        'grid.color':       '#252840',
+        'grid.linestyle':   '--',
+        'grid.alpha':       0.5,
+        'legend.facecolor': '#141728',
+        'legend.edgecolor': '#252840',
+    })
 
 
-def _sig_color(p: float) -> str:
-    return SIG_COLOR if p < ALPHA else INSIG_COLOR
-
-
-def _print_header(title: str) -> None:
-    print("\n" + "═" * 64)
-    print(f"  {title}")
-    print("═" * 64)
-
-
-# ─────────────────────────────────────────────
-# A/B TESTING FUNCTIONS
-# ─────────────────────────────────────────────
-def test_campaign_types(df: pd.DataFrame) -> pd.DataFrame:
-    _print_header("A/B TESTING — Campaign Types vs ROI")
-    types = df["campaign_type"].dropna().unique()
-    records = []
-    for a, b in combinations(types, 2):
-        g1 = df[df["campaign_type"] == a]["roi"]
-        g2 = df[df["campaign_type"] == b]["roi"]
-        t, p = _ttest(g1, g2)
-        label = _sig_label(p)
-        print(f"  {a:20s} vs {b:20s} | p={p:.4f}  {label}")
-        records.append({"Group A": a, "Group B": b, "p-value": round(p, 4),
-                         "Significant": p < ALPHA, "Verdict": label})
-    return pd.DataFrame(records)
-
-
-def test_languages(df: pd.DataFrame) -> pd.DataFrame:
-    _print_header("A/B TESTING — Languages vs ROI")
-    langs = df["language"].dropna().unique()
-    records = []
-    for a, b in combinations(langs, 2):
-        g1 = df[df["language"] == a]["roi"]
-        g2 = df[df["language"] == b]["roi"]
-        t, p = _ttest(g1, g2)
-        label = _sig_label(p)
-        print(f"  {a:15s} vs {b:15s} | p={p:.4f}  {label}")
-        records.append({"Lang A": a, "Lang B": b, "p-value": round(p, 4),
-                         "Significant": p < ALPHA, "Verdict": label})
-    return pd.DataFrame(records)
-
-
-def test_duration(df: pd.DataFrame) -> dict:
-    _print_header("A/B TESTING — Short vs Long Duration")
-    median_dur = df["duration"].median()
-    df = df.copy()
-    df["duration_group"] = np.where(df["duration"] <= median_dur, "Short", "Long")
-
-    short = df[df["duration_group"] == "Short"]["roi"]
-    long  = df[df["duration_group"] == "Long"]["roi"]
-    t, p  = _ttest(short, long)
-    label = _sig_label(p)
-    print(f"  Short (n={len(short)}) vs Long (n={len(long)}) | p={p:.4f}  {label}")
-    return {"p_value": round(p, 4), "significant": p < ALPHA, "df_with_group": df}
-
-
-# ─────────────────────────────────────────────
-# SUMMARY TABLES
-# ─────────────────────────────────────────────
-def summary_tables(df: pd.DataFrame, df_dur: pd.DataFrame) -> None:
-    for col, label in [("campaign_type", "Campaign Type"),
-                       ("language",       "Language"),
-                       ("duration_group", "Duration Group")]:
-        src = df_dur if col == "duration_group" else df
-        if col not in src.columns:
-            continue
-        _print_header(f"Mean ROI by {label}")
-        tbl = src.groupby(col)["roi"].agg(["mean", "count", "std"]).round(3)
-        print(tbl.to_string())
-
-
-# ─────────────────────────────────────────────
-# VISUALISATIONS
-# ─────────────────────────────────────────────
-def plot_campaign_types(df: pd.DataFrame) -> None:
-    fig, ax = plt.subplots(figsize=(12, 5))
-    types = sorted(df["campaign_type"].dropna().unique())
-    data  = [df[df["campaign_type"] == t]["roi"].dropna() for t in types]
-    bp = ax.violinplot(data, showmedians=True, showextrema=False)
-    for i, v in enumerate(bp["bodies"]):
-        v.set_facecolor(PALETTE[i % len(PALETTE)])
-        v.set_alpha(0.7)
-    bp["cmedians"].set_color("#FFB347")
-    bp["cmedians"].set_linewidth(2)
-    ax.set_xticks(range(1, len(types) + 1))
-    ax.set_xticklabels(types, rotation=30, ha="right")
-    ax.set_title("ROI Distribution by Campaign Type")
-    ax.set_ylabel("ROI")
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_languages(df: pd.DataFrame) -> None:
-    fig, ax = plt.subplots(figsize=(11, 5))
-    order = df.groupby("language")["roi"].median().sort_values(ascending=False).index
-    sns.boxplot(x="language", y="roi", data=df, order=order,
-                palette=PALETTE, ax=ax, linewidth=1.2, flierprops=dict(marker=".", color=TEXT_MUTED))
-    ax.set_title("ROI Distribution by Language")
-    ax.set_xlabel("")
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_duration(df_dur: pd.DataFrame) -> None:
-    if "duration_group" not in df_dur.columns:
-        return
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    for ax, (grp, color) in zip(axes, [("Short", PALETTE[0]), ("Long", PALETTE[1])]):
-        subset = df_dur[df_dur["duration_group"] == grp]["roi"].dropna()
-        sns.histplot(subset, kde=True, ax=ax, color=color, edgecolor="none", alpha=0.8)
-        ax.axvline(subset.mean(), color="#FFB347", linestyle="--", linewidth=1.5,
-                   label=f"Mean: {subset.mean():.2f}")
-        ax.set_title(f"{grp} Duration — ROI")
-        ax.legend()
-    plt.suptitle("ROI: Short vs Long Duration Campaigns", color="#6C63FF",
-                 fontweight="bold", fontsize=14)
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_p_value_summary(results_df: pd.DataFrame, title: str) -> None:
-    if results_df.empty:
-        return
-    results_df = results_df.copy().sort_values("p-value")
-    pair_labels = results_df.apply(
-        lambda r: f"{r.iloc[0]} vs {r.iloc[1]}", axis=1
+def _cohens_d(g1: pd.Series, g2: pd.Series) -> float:
+    """Cohen's d effect size."""
+    g1, g2 = g1.dropna(), g2.dropna()
+    if len(g1) < 2 or len(g2) < 2:
+        return 0.0
+    pooled_std = np.sqrt(
+        ((len(g1) - 1) * g1.std() ** 2 + (len(g2) - 1) * g2.std() ** 2)
+        / (len(g1) + len(g2) - 2)
     )
-    colors = [SIG_COLOR if sig else INSIG_COLOR for sig in results_df["Significant"]]
-
-    fig, ax = plt.subplots(figsize=(10, max(4, len(results_df) * 0.5)))
-    bars = ax.barh(pair_labels, results_df["p-value"], color=colors, edgecolor="none", height=0.5)
-    ax.axvline(ALPHA, color="#FFB347", linestyle="--", linewidth=1.5, label=f"α = {ALPHA}")
-    ax.set_title(f"p-values — {title}")
-    ax.set_xlabel("p-value")
-    ax.legend()
-    plt.tight_layout()
-    plt.show()
+    return (g1.mean() - g2.mean()) / pooled_std if pooled_std != 0 else 0.0
 
 
-# ─────────────────────────────────────────────
-# FULL PIPELINE
-# ─────────────────────────────────────────────
-def run_hypothesis_tests(path: str = "nykaa_campaign_data.csv") -> None:
-    df = pd.read_csv(path)
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+class HypothesisTester:
+    """Runs A/B hypothesis tests on campaign data."""
 
-    ct_results = test_campaign_types(df)
-    lg_results = test_languages(df)
-    dur_result  = test_duration(df)
-    df_dur = dur_result["df_with_group"]
+    def __init__(self, df: pd.DataFrame):
+        self.df = df
 
-    summary_tables(df, df_dur)
+    # ── Campaign Type Tests ──────────────────────────────────────────────────
 
-    plot_campaign_types(df)
-    plot_languages(df)
-    plot_duration(df_dur)
-    plot_p_value_summary(ct_results, "Campaign Types")
-    plot_p_value_summary(lg_results, "Languages")
+    def test_campaign_types(self) -> pd.DataFrame:
+        """
+        Pairwise Welch t-tests on ROI across campaign types.
+        Returns a DataFrame with columns:
+          group1, group2, p_value, significant, effect_size,
+          group1_mean, group2_mean, difference
+        """
+        if 'campaign_type' not in self.df.columns or 'roi' not in self.df.columns:
+            return pd.DataFrame()
 
-    print("\n✅ A/B Testing Completed!")
+        types = self.df['campaign_type'].dropna().unique()
+        records = []
+        for a, b in combinations(types, 2):
+            g1 = self.df[self.df['campaign_type'] == a]['roi']
+            g2 = self.df[self.df['campaign_type'] == b]['roi']
+            if len(g1) < 2 or len(g2) < 2:
+                continue
+            _, p = stats.ttest_ind(g1.dropna(), g2.dropna(), equal_var=False)
+            records.append({
+                'group1':       a,
+                'group2':       b,
+                'p_value':      round(float(p), 4),
+                'significant':  bool(p < ALPHA),
+                'effect_size':  round(_cohens_d(g1, g2), 3),
+                'group1_mean':  round(float(g1.mean()), 3),
+                'group2_mean':  round(float(g2.mean()), 3),
+                'difference':   round(float(g1.mean() - g2.mean()), 3),
+            })
+        return pd.DataFrame(records)
+
+    # ── Language Tests ───────────────────────────────────────────────────────
+
+    def test_languages(self) -> pd.DataFrame:
+        """
+        Pairwise Welch t-tests on ROI across languages.
+        Returns same schema as test_campaign_types().
+        """
+        if 'language' not in self.df.columns or 'roi' not in self.df.columns:
+            return pd.DataFrame()
+
+        langs = self.df['language'].dropna().unique()
+        records = []
+        for a, b in combinations(langs, 2):
+            g1 = self.df[self.df['language'] == a]['roi']
+            g2 = self.df[self.df['language'] == b]['roi']
+            if len(g1) < 2 or len(g2) < 2:
+                continue
+            _, p = stats.ttest_ind(g1.dropna(), g2.dropna(), equal_var=False)
+            records.append({
+                'group1':      a,
+                'group2':      b,
+                'p_value':     round(float(p), 4),
+                'significant': bool(p < ALPHA),
+                'effect_size': round(_cohens_d(g1, g2), 3),
+                'group1_mean': round(float(g1.mean()), 3),
+                'group2_mean': round(float(g2.mean()), 3),
+                'difference':  round(float(g1.mean() - g2.mean()), 3),
+            })
+        return pd.DataFrame(records)
+
+    # ── Duration Test ────────────────────────────────────────────────────────
+
+    def test_duration_groups(self) -> dict:
+        """
+        Welch t-test: short-duration vs long-duration campaigns by ROI.
+        Returns a dict with keys: p_value, significant, effect_size,
+          group1_mean (Short), group2_mean (Long)
+        """
+        if 'duration' not in self.df.columns or 'roi' not in self.df.columns:
+            return {'error': 'Missing duration or roi column'}
+
+        median_dur = self.df['duration'].median()
+        short = self.df[self.df['duration'] <= median_dur]['roi']
+        long_ = self.df[self.df['duration'] >  median_dur]['roi']
+
+        if len(short) < 2 or len(long_) < 2:
+            return {'error': 'Insufficient data'}
+
+        _, p = stats.ttest_ind(short.dropna(), long_.dropna(), equal_var=False)
+        return {
+            'p_value':      round(float(p), 4),
+            'significant':  bool(p < ALPHA),
+            'effect_size':  round(_cohens_d(short, long_), 3),
+            'group1_mean':  round(float(short.mean()), 3),  # Short
+            'group2_mean':  round(float(long_.mean()), 3),  # Long
+        }
+
+    # ── Visualisation ────────────────────────────────────────────────────────
+
+    def plot_test_results(self, results_df: pd.DataFrame, title: str = ''):
+        """Bar chart of p-values — returns a matplotlib Figure."""
+        if results_df is None or results_df.empty:
+            return None
+
+        _apply_dark_style()
+        df = results_df.copy().sort_values('p_value')
+        labels = df.apply(lambda r: f"{r['group1']} vs {r['group2']}", axis=1)
+        colors = [SIG_COLOR if s else INSIG_COLOR for s in df['significant']]
+
+        fig, ax = plt.subplots(figsize=(10, max(4, len(df) * 0.5)))
+        ax.barh(labels, df['p_value'], color=colors, edgecolor='none', height=0.5)
+        ax.axvline(ALPHA, color='#FFB347', linestyle='--', linewidth=1.5,
+                   label=f'α = {ALPHA}')
+        ax.set_title(f'p-values — {title}')
+        ax.set_xlabel('p-value')
+        ax.legend()
+        plt.tight_layout()
+        return fig
 
 
-if __name__ == "__main__":
-    run_hypothesis_tests()
+# ── Standalone execution ──────────────────────────────────────────────────────
+if __name__ == '__main__':
+    df = pd.read_csv('nykaa_campaign_data.csv')
+    tester = HypothesisTester(df)
+    print(tester.test_campaign_types())
+    print(tester.test_duration_groups())
+    print(tester.test_languages())

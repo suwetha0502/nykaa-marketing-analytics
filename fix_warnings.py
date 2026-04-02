@@ -1,0 +1,6 @@
+f = open('app.py', encoding='utf-8').read()
+count = f.count('use_container_width')
+f = f.replace('use_container_width=True', 'width="stretch"')
+f = f.replace('use_container_width=False', 'width="content"')
+open('app.py', 'w', encoding='utf-8').write(f)
+print(f"Fixed {count} deprecated use_container_width occurrences.")
